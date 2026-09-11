@@ -52,7 +52,7 @@ export const STORAGE_KEY = "xiongdong-release-workbench-v1"
 const STORAGE_UPDATED_KEY = `${STORAGE_KEY}-updated-at`
 const CLOUD_RELOAD_KEY = `${STORAGE_KEY}-cloud-reload`
 let cloudSyncStarted = false
-let saveTimer: ReturnType<typeof setTimeout> | null = null
+let saveTimer: number | null = null
 
 export const DEFAULT_QQ_TEMPLATE = `游戏上线名称：《{游戏上线名称}》\n1、首发时间：{首发时间}\n2、首发物料已同步，麻烦上传预约\n3、该款为{折扣}，折扣由贵方设置！！\n\n包体测试了嘛 @{渠道联系人}`
 
@@ -240,7 +240,7 @@ export function loadData(): WorkbenchData {
 export function saveData(data: WorkbenchData) {
   if (typeof window === "undefined") return
   writeLocal(data)
-  if (saveTimer) window.clearTimeout(saveTimer)
+  if (saveTimer !== null) window.clearTimeout(saveTimer)
   saveTimer = window.setTimeout(() => void putCloud(data), 450)
 }
 
