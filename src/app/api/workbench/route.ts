@@ -20,9 +20,10 @@ export async function GET(request: Request) {
 
   try {
     const sql = getSql()
-    const rows = await sql`SELECT data, version, updated_at FROM workbench_state WHERE workspace_key = 'default' LIMIT 1`
-    if (!rows.length) return Response.json({ code: "EMPTY" }, { status: 404 })
-    const row = rows[0] as { data: unknown; version: number; updated_at: string | Date }
+    const rawRows = await sql`SELECT data, version, updated_at FROM workbench_state WHERE workspace_key = 'default' LIMIT 1`
+    const rows = rawRows as unknown as Array<{ data: unknown; version: number; updated_at: string | Date }>
+    if (rows.length === 0) return Response.json({ code: "EMPTY" }, { status: 404 })
+    const row = rows[0]
     return Response.json({
       data: row.data,
       version: row.version,
