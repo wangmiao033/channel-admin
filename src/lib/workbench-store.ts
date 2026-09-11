@@ -49,6 +49,10 @@ export type WorkbenchData = {
 }
 
 export const STORAGE_KEY = "xiongdong-release-workbench-v1"
+const STORAGE_UPDATED_KEY = `${STORAGE_KEY}-updated-at`
+const CLOUD_RELOAD_KEY = `${STORAGE_KEY}-cloud-reload`
+let cloudSyncStarted = false
+let saveTimer: ReturnType<typeof setTimeout> | null = null
 
 export const DEFAULT_QQ_TEMPLATE = `游戏上线名称：《{游戏上线名称}》\n1、首发时间：{首发时间}\n2、首发物料已同步，麻烦上传预约\n3、该款为{折扣}，折扣由贵方设置！！\n\n包体测试了嘛 @{渠道联系人}`
 
@@ -102,26 +106,147 @@ export const seedData: WorkbenchData = {
   releases: [seedRelease],
 }
 
-export function loadData(): WorkbenchData {
+function isValidData(value: unknown): value is WorkbenchData {
+  if (!value || typeof value !== "object") return false
+  const data = value as Partial<WorkbenchData>
+  return data.version === 1 && Array.isArray(data.channels) && Array.isArray(data.releases)
+}
+
+function writeLocal(data: WorkbenchData, updatedAt = Date.now()) {
+  if (typeof window === "undefined") return
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  window.localStorage.setItem(STORAGE_UPDATED_KEY, String(updatedAt))
+}
+
+function readLocal(): WorkbenchData {
   if (typeof window === "undefined") return seedData
   const raw = window.localStorage.getItem(STORAGE_KEY)
   if (!raw) {
-    saveData(seedData)
+    writeLocal(seedData)
     return seedData
   }
   try {
-    const parsed = JSON.parse(raw) as WorkbenchData
-    if (!Array.isArray(parsed.channels) || !Array.isArray(parsed.releases)) throw new Error("invalid")
+    const parsed = JSON.parse(raw) as unknown
+    if (!isValidData(parsed)) throw new Error("invalid")
     return parsed
   } catch {
-    saveData(seedData)
+    writeLocal(seedData)
     return seedData
   }
 }
 
+async function ensureCloudSession() {
+  if (typeof window === "undefined") return false
+  try {
+    const status = await fetch("/api/workbench/login", { cache: "no-store" })
+    if (status.status === 503) return false
+    if (status.ok) {
+      const json = await status.json() as { authenticated?: boolean }
+      if (json.authenticated) return true
+    }
+
+    const attempted = window.sessionStorage.getItem(`${STORAGE_KEY}-login-attempted`)
+    if (attempted === "cancelled") return false
+    const pass = window.prompt("发行工作台已启用云同步，请输入工作台密码：")
+    if (!pass) {
+      window.sessionStorage.setItem(`${STORAGE_KEY}-login-attempted`, "cancelled")
+      return false
+    }
+
+    const login = await fetch("/api/workbench/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: pass }),
+    })
+    if (!login.ok) {
+      window.alert("云同步密码错误，当前仍使用本机数据。")
+      return false
+    }
+    window.sessionStorage.removeItem(`${STORAGE_KEY}-login-attempted`)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function putCloud(data: WorkbenchData) {
+  if (!(await ensureCloudSession())) return false
+  try {
+    const response = await fetch("/api/workbench", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ data }),
+    })
+    if (!response.ok) return false
+    const json = await response.json().catch(() => ({})) as { updatedAt?: string }
+    if (json.updatedAt) {
+      window.localStorage.setItem(STORAGE_UPDATED_KEY, String(Date.parse(json.updatedAt)))
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function hydrateFromCloud(local: WorkbenchData) {
+  if (typeof window === "undefined") return
+  if (!(await ensureCloudSession())) return
+
+  try {
+    const response = await fetch("/api/workbench", { cache: "no-store" })
+    if (response.status === 404) {
+      await putCloud(local)
+      return
+    }
+    if (!response.ok) return
+
+    const json = await response.json() as { data?: unknown; updatedAt?: string }
+    if (!isValidData(json.data)) return
+    const remote = json.data
+    const remoteUpdated = json.updatedAt ? Date.parse(json.updatedAt) : 0
+    const localUpdated = Number(window.localStorage.getItem(STORAGE_UPDATED_KEY) || 0)
+
+    if (localUpdated > remoteUpdated + 1500) {
+      await putCloud(local)
+      return
+    }
+
+    if (JSON.stringify(remote) !== JSON.stringify(local)) {
+      writeLocal(remote, remoteUpdated || Date.now())
+      const reloadStamp = String(remoteUpdated || Date.now())
+      if (window.sessionStorage.getItem(CLOUD_RELOAD_KEY) !== reloadStamp) {
+        window.sessionStorage.setItem(CLOUD_RELOAD_KEY, reloadStamp)
+        window.location.reload()
+      }
+    }
+  } catch {
+    // Local mode remains fully usable if cloud sync is temporarily unavailable.
+  }
+}
+
+function startCloudSync(local: WorkbenchData) {
+  if (typeof window === "undefined" || cloudSyncStarted) return
+  cloudSyncStarted = true
+  window.setTimeout(() => void hydrateFromCloud(local), 50)
+  window.addEventListener("focus", () => void hydrateFromCloud(readLocal()))
+}
+
+export function loadData(): WorkbenchData {
+  const local = readLocal()
+  startCloudSync(local)
+  return local
+}
+
 export function saveData(data: WorkbenchData) {
   if (typeof window === "undefined") return
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
+  writeLocal(data)
+  if (saveTimer) window.clearTimeout(saveTimer)
+  saveTimer = window.setTimeout(() => void putCloud(data), 450)
+}
+
+export async function forceCloudSync() {
+  if (typeof window === "undefined") return false
+  return putCloud(readLocal())
 }
 
 export function replaceTokens(template: string, release: ReleaseTask, channel: ChannelRule) {
