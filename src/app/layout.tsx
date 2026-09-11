@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "渠道管理系统",
-  description: "渠道管理系统",
+  title: "熊动游戏发行工作台",
+  description: "渠道首发、素材、提测、签名与上架流程管理",
 }
 
 export default function RootLayout({

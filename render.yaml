@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: aiwu-release-worker
+    runtime: docker
+    plan: free
+    rootDir: worker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: AIWU_USERNAME
+        sync: false
+      - key: AIWU_PASSWORD
+        sync: false
+      - key: AUTOMATION_TOKEN
+        generateValue: true
